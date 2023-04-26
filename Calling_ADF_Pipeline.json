@@ -1,0 +1,228 @@
+{
+    "name": "PL_Trigger_External_ADF",
+    "properties": {
+        "description": "Generic pipeline to trigger pipeline from another ADF",
+        "activities": [
+            {
+                "name": "Trigger_Child_Pipeline",
+                "description": "Trigger child pipeline",
+                "type": "WebActivity",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 2,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "url": {
+                        "value": "@concat('https://management.azure.com/subscriptions/', pipeline().parameters.Subscription_ID, '/resourceGroups/', pipeline().parameters.Resource_Group_Name, '/providers/Microsoft.DataFactory/factories/', pipeline().parameters.Child_ADF_Name, '/pipelines/', pipeline().parameters.Child_Pipeline_Name, '/createRun?api-version=', pipeline().parameters.API_Version)",
+                        "type": "Expression"
+                    },
+                    "connectVia": {
+                        "referenceName": "IR-Name",
+                        "type": "IntegrationRuntimeReference"
+                    },
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": {
+                        "Parent_ADF_ID": "@{pipeline().RunId}"
+                    },
+                    "authentication": {
+                        "type": "MSI",
+                        "resource": "https://management.azure.com/"
+                    }
+                }
+            },
+            {
+                "name": "Fetch_Child_Run_ID",
+                "description": "Fetch run ID of child pipeline",
+                "type": "SetVariable",
+                "dependsOn": [
+                    {
+                        "activity": "Trigger_Child_Pipeline",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "v_Child_Run_ID",
+                    "value": {
+                        "value": "@activity('Trigger_Child_Pipeline').output.runId",
+                        "type": "Expression"
+                    }
+                }
+            },
+            {
+                "name": "Monitor_Child_Pipeline",
+                "description": "Monitor status of the child pipeline",
+                "type": "Until",
+                "dependsOn": [
+                    {
+                        "activity": "Fetch_Child_Run_ID",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@not(\n    Or(equals('InProgress', variables('v_Child_Run_Status')),equals('Queued', variables('v_Child_Run_Status')))\n)",
+                        "type": "Expression"
+                    },
+                    "activities": [
+                        {
+                            "name": "Wait_x_seconds",
+                            "description": "Wait for 10 seconds",
+                            "type": "Wait",
+                            "dependsOn": [],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "waitTimeInSeconds": 10
+                            }
+                        },
+                        {
+                            "name": "Check_Child_Status",
+                            "description": "Check status of the chile pipeline",
+                            "type": "WebActivity",
+                            "dependsOn": [
+                                {
+                                    "activity": "Wait_x_seconds",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 2,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "url": {
+                                    "value": "@concat('https://management.azure.com/subscriptions/', pipeline().parameters.Subscription_ID, '/resourceGroups/', pipeline().parameters.Resource_Group_Name, '/providers/Microsoft.DataFactory/factories/', pipeline().parameters.Child_ADF_Name, '/pipelineruns/', variables('v_Child_Run_ID'), '?api-version=', pipeline().parameters.API_Version)",
+                                    "type": "Expression"
+                                },
+                                "connectVia": {
+                                    "referenceName": "IR-Name",
+                                    "type": "IntegrationRuntimeReference"
+                                },
+                                "method": "GET",
+                                "headers": {
+                                    "Content-Type": "application/json"
+                                },
+                                "authentication": {
+                                    "type": "MSI",
+                                    "resource": "https://management.azure.com/"
+                                }
+                            }
+                        },
+                        {
+                            "name": "JOB_STATUS",
+                            "description": "Set status of the child pipeline in a variable",
+                            "type": "SetVariable",
+                            "dependsOn": [
+                                {
+                                    "activity": "Check_Child_Status",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "v_Child_Run_Status",
+                                "value": {
+                                    "value": "@activity('Check_Child_Status').output.Status",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    ],
+                    "timeout": "7.00:00:00"
+                }
+            },
+            {
+                "name": "Check_Final_Status",
+                "description": "Check if child pipeline got successfully completed or not",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "Monitor_Child_Pipeline",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@equals('Succeeded', variables('v_Child_Run_Status'))",
+                        "type": "Expression"
+                    },
+                    "ifFalseActivities": [
+                        {
+                            "name": "Fail_Pipeline",
+                            "description": "Fail pipeline",
+                            "type": "Fail",
+                            "dependsOn": [],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "message": {
+                                    "value": "@concat('Run of child pipeline ', pipeline().parameters.Child_Pipeline_Name, ' in ADF ', pipeline().parameters.Child_ADF_Name, ' is not completed successfully. Child pipeline completed with status: ', variables('v_Child_Run_Status'))",
+                                    "type": "Expression"
+                                },
+                                "errorCode": "500"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "concurrency": 10,
+        "parameters": {
+            "Subscription_ID": {
+                "type": "string"
+            },
+            "Resource_Group_Name": {
+                "type": "string"
+            },
+            "Child_ADF_Name": {
+                "type": "string"
+            },
+            "Child_Pipeline_Name": {
+                "type": "string"
+            },
+            "API_Version": {
+                "type": "string",
+                "defaultValue": "2018-06-01"
+            }
+        },
+        "variables": {
+            "v_Child_Run_ID": {
+                "type": "String"
+            },
+            "v_Child_Run_Status": {
+                "type": "String"
+            }
+        },
+        "annotations": [],
+        "lastPublishTime": "2021-05-26T15:26:56Z"
+    },
+    "type": "Microsoft.DataFactory/factories/pipelines",
+    "apiVersion": "2018-06-01",
+    "dependsOn": [
+        "[concat(variables('factoryId'), '/datasets/emptyXULog')]",
+        "[concat(variables('factoryId'), '/datasets/XU_Log')]"
+    ]
+}
