@@ -1,2 +1,3 @@
 # Trigger and track ADF pipeline from another adf
-Trigger Azure Data Factory (ADF) pipeline from another ADF and track its running status
+
+Detailed explaination is available in [Blog](https://medium.com/@rahul.madhani/how-to-trigger-and-track-the-adf-pipeline-from-another-adf-ca71fb9421d4)
